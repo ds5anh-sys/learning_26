@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>출석 스캔</title>
+  <script src="https://unpkg.com/html5-qrcode"></script>
+</head>
+
+<body style="text-align:center; font-family:sans-serif;">
+  <h2>QR 출석 스캔</h2>
+
+  <div id="reader" style="width:320px; margin:auto;"></div>
+
+  <p id="result" style="font-size:20px; margin-top:20px;"></p>
+
+  <!-- 🔊 효과음 -->
+  <audio id="successSound" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
+  <audio id="failSound" src="https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg"></audio>
+
+  <script>
+    const API_URL = "https://script.google.com/macros/s/XXXX/exec"; // 🔥 본인 URL로 교체
+
+    let lastScan = "";
+    let lastTime = 0;
+
+    function onScanSuccess(code) {
+      const now = Date.now();
+
+      if (code === lastScan && now - lastTime < 2000) return;
+
+      lastScan = code;
+      lastTime = now;
+
+      fetch(API_URL + "?action=checkin&code=" + code)
+        .then(res => res.text())
+        .then(data => {
+          let msg = "";
+
+          if (data === "SUCCESS") {
+            msg = "✅ 출석 완료";
+            document.getElementById("successSound").play();
+          } else if (data === "ALREADY") {
+            msg = "⚠️ 이미 출석";
+            document.getElementById("failSound").play();
+          } else {
+            msg = "❌ 미등록";
+            document.getElementById("failSound").play();
+          }
+
+          document.getElementById("result").innerText = msg;
+        });
+    }
+
+    function start() {
+      new Html5Qrcode("reader").start(
+        { facingMode: "environment" },
+        { fps: 10, qrbox: 250 },
+        onScanSuccess
+      );
+    }
+  </script>
+
+  <br>
+  <button onclick="start()" style="font-size:20px; padding:10px;">
+    📷 카메라 시작
+  </button>
+
+</body>
+</html>
