@@ -1,69 +1,161 @@
 <!DOCTYPE html>
 <html>
 <head>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>출석 스캔</title>
-  <script src="https://unpkg.com/html5-qrcode"></script>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>연수 QR 출석 (카메라 + 리더기)</title>
+<script src="https://unpkg.com/html5-qrcode"></script>
 </head>
 
 <body style="text-align:center; font-family:sans-serif;">
-  <h2>QR 출석 스캔</h2>
+<h2>연수 QR 출석 스캔</h2>
 
-  <div id="reader" style="width:320px; margin:auto;"></div>
+<div id="reader" style="width:300px; margin:auto;"></div>
+<p id="result" style="font-size:22px; margin-top:20px;"></p>
 
-  <p id="result" style="font-size:20px; margin-top:20px;"></p>
+<audio id="successSound" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
+<audio id="failSound" src="https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg"></audio>
 
-  <!-- 🔊 효과음 -->
-  <audio id="successSound" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
-  <audio id="failSound" src="https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg"></audio>
+<!-- 🔥 리더기 입력창 -->
+<input 
+  id="scannerInput" 
+  placeholder="리더기 스캔 대기..." 
+  style="font-size:20px; padding:10px; width:260px; text-align:center;"
+/>
 
-  <script>
-    const API_URL = "https://script.google.com/macros/s/XXXX/exec"; // 🔥 본인 URL로 교체
+<br><br>
 
-    let lastScan = "";
-    let lastTime = 0;
+<button onclick="startCamera()" style="font-size:20px; padding:10px;">
+📷 카메라 시작
+</button>
 
-    function onScanSuccess(code) {
-      const now = Date.now();
+<script>
+const API_URL = "https://script.google.com/macros/s/AKfycbw6Op1r73gq8PGg6xqLFa45NFmB58ssRgPn25MOOi1eEJ09RQO6fC2G7Wb7Xwb8L-kb/exec";
 
-      if (code === lastScan && now - lastTime < 2000) return;
+// 🔥 추가 (출석일 설정)
+const DAY = "1"; // 👉 2일차는 "2"로 변경
 
-      lastScan = code;
-      lastTime = now;
+let scanner;
+let lastScan = "";
+let lastTime = 0;
+let bufferTimer = null;
 
-      fetch(API_URL + "?action=checkin&code=" + code)
-        .then(res => res.text())
-        .then(data => {
-          let msg = "";
+const input = document.getElementById("scannerInput");
 
-          if (data === "SUCCESS") {
-            msg = "✅ 출석 완료";
-            document.getElementById("successSound").play();
-          } else if (data === "ALREADY") {
-            msg = "⚠️ 이미 출석";
-            document.getElementById("failSound").play();
-          } else {
-            msg = "❌ 미등록";
-            document.getElementById("failSound").play();
-          }
+// 🔥 포커스 유지
+function keepFocus(){
+  input.focus();
+}
+setInterval(keepFocus, 500);
 
-          document.getElementById("result").innerText = msg;
-        });
+// 🔥 문자열 정리
+function cleanCode(raw){
+  if(!raw) return "";
+
+  const match = raw.match(/code=([A-Za-z0-9]+)/);
+  if(match) return match[1].toUpperCase();
+
+  return raw.replace(/[^A-Z0-9]/g, '').toUpperCase();
+}
+
+// 🔥 화면 효과
+function flash(color){
+  const d=document.createElement("div");
+  d.style.position="fixed";
+  d.style.top=0;
+  d.style.left=0;
+  d.style.width="100%";
+  d.style.height="100%";
+  d.style.background=color;
+  d.style.opacity="0.6";
+  d.style.zIndex="9999";
+  document.body.appendChild(d);
+  setTimeout(()=>d.remove(),150);
+}
+
+// 🔥 리더기 입력 처리
+input.addEventListener("input", function(){
+  clearTimeout(bufferTimer);
+
+  bufferTimer = setTimeout(() => {
+    const code = cleanCode(input.value);
+    input.value = "";
+
+    if(code){
+      onScanSuccess(code);
+    }
+  }, 100);
+});
+
+// 🔥 Enter 대응
+input.addEventListener("keydown", function(e){
+  if(e.key === "Enter"){
+    const code = cleanCode(input.value);
+    input.value = "";
+
+    if(code){
+      onScanSuccess(code);
+    }
+  }
+});
+
+// 🚀 공통 처리
+function onScanSuccess(code){
+  const now = Date.now();
+  if(code===lastScan && now-lastTime<800) return;
+
+  lastScan=code;
+  lastTime=now;
+
+  // 🔥 day 추가됨
+  fetch(API_URL+"?action=checkin&day="+DAY+"&code="+encodeURIComponent(code), {cache:"no-store"})
+  .then(r=>r.text())
+  .then(t=>{
+    let d;
+    try{
+      d=JSON.parse(t);
+    }catch{
+      document.getElementById("result").innerText="⚠️ 서버 오류";
+      flash("orange");
+      return;
     }
 
-    function start() {
-      new Html5Qrcode("reader").start(
-        { facingMode: "environment" },
-        { fps: 10, qrbox: 250 },
-        onScanSuccess
-      );
+    if(d.status==="SUCCESS"){
+      document.getElementById("result").innerText=
+      `✅ ${d.name} (${d.school})\n🕒 ${d.time}`;
+      successSound.play();
+      flash("green");
+
+    }else if(d.status==="ALREADY"){
+      document.getElementById("result").innerText=
+      `⚠️ 이미 출석\n${d.name}`;
+      failSound.play();
+      flash("yellow");
+
+    }else{
+      document.getElementById("result").innerText="❌ 미등록";
+      failSound.play();
+      flash("red");
     }
-  </script>
 
-  <br>
-  <button onclick="start()" style="font-size:20px; padding:10px;">
-    📷 카메라 시작
-  </button>
+    input.focus();
+  })
+  .catch(()=>{
+    document.getElementById("result").innerText="⚠️ 서버 연결 실패";
+    flash("red");
+  });
+}
 
+// 🚀 카메라
+function startCamera(){
+  scanner=new Html5Qrcode("reader");
+  scanner.start(
+    { facingMode:"environment"},
+    { fps:20, qrbox:200 },
+    onScanSuccess
+  );
+
+  input.focus();
+}
+</script>
 </body>
 </html>
