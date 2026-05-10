@@ -10,7 +10,7 @@
 <h2>연수 QR 출석 스캔</h2>
 
 <div id="reader" style="width:300px; margin:auto;"></div>
-<p id="result" style="font-size:22px; margin-top:20px;"></p>
+<p id="result" style="font-size:22px; margin-top:20px; white-space:pre-line;"></p>
 
 <audio id="successSound" src="https://actions.google.com/sounds/v1/cartoon/clang_and_wobble.ogg"></audio>
 <audio id="failSound" src="https://actions.google.com/sounds/v1/cartoon/wood_plank_flicks.ogg"></audio>
@@ -18,6 +18,12 @@
 <!-- 🔥 리더기 입력창 -->
 <input 
   id="scannerInput" 
+  type="text"
+  inputmode="latin"
+  autocomplete="off"
+  autocapitalize="off"
+  autocorrect="off"
+  spellcheck="false"
   placeholder="리더기 스캔 대기..." 
   style="font-size:20px; padding:10px; width:260px; text-align:center;"
 />
@@ -31,130 +37,226 @@
 <script>
 const API_URL = "https://script.google.com/macros/s/AKfycbw6Op1r73gq8PGg6xqLFa45NFmB58ssRgPn25MOOi1eEJ09RQO6fC2G7Wb7Xwb8L-kb/exec";
 
-// 🔥 추가 (출석일 설정)
-const DAY = "1"; // 👉 2일차는 "2"로 변경
+// 🔥 출석일 설정
+const DAY = "1"; // 👉 2일차는 "2"
 
 let scanner;
+
+// 🔥 중복 스캔 방지
 let lastScan = "";
 let lastTime = 0;
-let bufferTimer = null;
+
+// 🔥 입력 잠금 (핵심)
+let isProcessing = false;
 
 const input = document.getElementById("scannerInput");
 
+// 🔥 한글 입력 방지
+input.addEventListener("compositionstart", function(e){
+  e.preventDefault();
+});
+  
+
 // 🔥 포커스 유지
 function keepFocus(){
-  input.focus();
+  if(document.activeElement !== input){
+    input.focus();
+  }
 }
 setInterval(keepFocus, 500);
 
 // 🔥 문자열 정리
 function cleanCode(raw){
+
   if(!raw) return "";
 
-  const match = raw.match(/code=([A-Za-z0-9]+)/);
-  if(match) return match[1].toUpperCase();
+  raw = raw.trim();
 
-  return raw.replace(/[^A-Z0-9]/g, '').toUpperCase();
+  // URL 형태 대응
+  const match = raw.match(/code=([A-Za-z0-9]+)/i);
+
+  if(match) {
+    return match[1].toUpperCase();
+  }
+
+  // 🔥 영문/숫자만 남김
+  raw = raw.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+
+  // 🔥 영문1 + 숫자3 패턴 추출
+  const found = raw.match(/[A-Z][0-9]{3}/);
+
+  if(found){
+    return found[0];
+  }
+
+  return "";
 }
 
 // 🔥 화면 효과
 function flash(color){
-  const d=document.createElement("div");
-  d.style.position="fixed";
-  d.style.top=0;
-  d.style.left=0;
-  d.style.width="100%";
-  d.style.height="100%";
-  d.style.background=color;
-  d.style.opacity="0.6";
-  d.style.zIndex="9999";
+  const d = document.createElement("div");
+
+  d.style.position = "fixed";
+  d.style.top = 0;
+  d.style.left = 0;
+  d.style.width = "100%";
+  d.style.height = "100%";
+  d.style.background = color;
+  d.style.opacity = "0.4";
+  d.style.zIndex = "9999";
+
   document.body.appendChild(d);
-  setTimeout(()=>d.remove(),150);
+
+  setTimeout(() => d.remove(), 150);
 }
 
-// 🔥 리더기 입력 처리
+// 🔥 입력창 초기화 (핵심)
+function resetInput(){
+  input.value = "";
+  input.blur();
+
+  setTimeout(() => {
+    input.value = "";
+    input.focus();
+  }, 30);
+}
+
+
+// 🔥 리더기 입력 처리(Enter 입력 기반 처리에서 문자열 추출구조)
 input.addEventListener("input", function(){
-  clearTimeout(bufferTimer);
 
-  bufferTimer = setTimeout(() => {
-    const code = cleanCode(input.value);
-    input.value = "";
+  // 🔥 처리중이면 무시
+  if(isProcessing) return;
 
-    if(code){
-      onScanSuccess(code);
-    }
-  }, 100);
-});
+  const raw = input.value;
 
-// 🔥 Enter 대응
-input.addEventListener("keydown", function(e){
-  if(e.key === "Enter"){
-    const code = cleanCode(input.value);
-    input.value = "";
+  // 최소 4글자 이상일 때만 검사
+  if(raw.length < 4) return;
 
-    if(code){
-      onScanSuccess(code);
-    }
-  }
+  const code = cleanCode(raw);
+
+  // 정상코드 없으면 계속 입력 대기
+  if(!code) return;
+
+  // 🔥 즉시 입력창 비우기
+  resetInput();
+
+  onScanSuccess(code);
 });
 
 // 🚀 공통 처리
 function onScanSuccess(code){
+
+  // 🔥 처리중이면 차단
+  if(isProcessing) return;
+
   const now = Date.now();
-  if(code===lastScan && now-lastTime<800) return;
 
-  lastScan=code;
-  lastTime=now;
+  // 🔥 동일 QR 연속 방지
+  if(code === lastScan && now - lastTime < 1000){
+    return;
+  }
 
-  // 🔥 day 추가됨
-  fetch(API_URL+"?action=checkin&day="+DAY+"&code="+encodeURIComponent(code), {cache:"no-store"})
-  .then(r=>r.text())
-  .then(t=>{
+  lastScan = code;
+  lastTime = now;
+
+  isProcessing = true;
+
+  fetch(
+    API_URL +
+    "?action=checkin" +
+    "&day=" + DAY +
+    "&code=" + encodeURIComponent(code) +
+    "&ts=" + Date.now(),
+    {
+      cache:"no-store"
+    }
+  )
+  .then(r => r.text())
+  .then(t => {
+
     let d;
+
     try{
-      d=JSON.parse(t);
-    }catch{
-      document.getElementById("result").innerText="⚠️ 서버 오류";
+      d = JSON.parse(t);
+    }catch(err){
+
+      document.getElementById("result").innerText =
+        "⚠️ 서버 응답 오류";
+
       flash("orange");
+
       return;
     }
 
-    if(d.status==="SUCCESS"){
-      document.getElementById("result").innerText=
-      `✅ ${d.name} (${d.school})\n🕒 ${d.time}`;
+    if(d.status === "SUCCESS"){
+
+      document.getElementById("result").innerText =
+        `✅ ${d.name} (${d.school})\n🕒 ${d.time}`;
+
       successSound.play();
+
       flash("green");
 
-    }else if(d.status==="ALREADY"){
-      document.getElementById("result").innerText=
-      `⚠️ 이미 출석\n${d.name}`;
+    }else if(d.status === "ALREADY"){
+
+      document.getElementById("result").innerText =
+        `⚠️ 이미 출석\n${d.name}`;
+
       failSound.play();
+
       flash("yellow");
 
     }else{
-      document.getElementById("result").innerText="❌ 미등록";
+
+      document.getElementById("result").innerText =
+        `❌ 미등록\n${code}`;
+
       failSound.play();
+
       flash("red");
     }
-
-    input.focus();
   })
-  .catch(()=>{
-    document.getElementById("result").innerText="⚠️ 서버 연결 실패";
+  .catch(() => {
+
+    document.getElementById("result").innerText =
+      "⚠️ 서버 연결 실패";
+
     flash("red");
+
+  })
+  .finally(() => {
+
+    // 🔥 처리 완료 후 재활성화
+    setTimeout(() => {
+      isProcessing = false;
+      resetInput();
+    }, 300);
   });
 }
 
 // 🚀 카메라
 function startCamera(){
-  scanner=new Html5Qrcode("reader");
+
+  scanner = new Html5Qrcode("reader");
+
   scanner.start(
-    { facingMode:"environment"},
-    { fps:20, qrbox:200 },
-    onScanSuccess
+    { facingMode:"environment" },
+    {
+      fps:20,
+      qrbox:200
+    },
+    (decodedText) => {
+
+      const code = cleanCode(decodedText);
+
+      if(code){
+        onScanSuccess(code);
+      }
+    }
   );
 
-  input.focus();
+  resetInput();
 }
 </script>
 </body>
